@@ -7,7 +7,7 @@ steps:
       [
         'build',
         '-t',
-        'us-central1-docker.pkg.dev/nicoservertest/mercadolibre-competence-scrapper/job:$COMMIT_SHA',
+        'us-central1-docker.pkg.dev/nicoservertest/mercadolibre-competence-scrapper/meli_competence_scrapper:$COMMIT_SHA',
         '.'
       ]
 
@@ -15,8 +15,8 @@ steps:
     args:
       [
         'push',
-        'us-central1-docker.pkg.dev/nicoservertest/mercadolibre-competence-scrapper/job:$COMMIT_SHA'
+        'us-central1-docker.pkg.dev/nicoservertest/mercadolibre-competence-scrapper/meli_competence_scrapper:$COMMIT_SHA'
       ]
 
 images:
-  - 'us-central1-docker.pkg.dev/nicoservertest/mercadolibre-competence-scrapper/job:$COMMIT_SHA'
+  - 'us-central1-docker.pkg.dev/nicoservertest/mercadolibre-competence-scrapper/meli_competence_scrapper:$COMMIT_SHA'
