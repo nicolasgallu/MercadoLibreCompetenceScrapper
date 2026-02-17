@@ -1,7 +1,7 @@
 from sqlalchemy import create_engine, text
 from google.cloud.sql.connector import Connector
-from project.settings.config import INSTANCE_DB, USER_DB, PASSWORD_DB, NAME_DB,  MELI_SCHMA
-from project.utils.logger import logger
+from app.settings.config import INSTANCE_DB, USER_DB, PASSWORD_DB, NAME_DB,  MELI_SCHMA
+from app.utils.logger import logger
 
 ##!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
 ##CAMBIAR ESQUEMAS FIJOS A PARAMETROS 

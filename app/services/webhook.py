@@ -1,8 +1,8 @@
 import threading
-from project.services.pipeline_scrapping import scrapping
-from project.settings.config import SECRET_GUIAS
+from app.services.pipeline_scrapping import scrapping
+from app.settings.config import SECRET_GUIAS
 from flask import Blueprint, request, Response, jsonify
-from project.utils.logger import logger
+from app.utils.logger import logger
 
 # BLUEPRINT CREATION
 scrapping_event = Blueprint("scrapping_init", __name__, url_prefix="/webhooks/start_scrapping")

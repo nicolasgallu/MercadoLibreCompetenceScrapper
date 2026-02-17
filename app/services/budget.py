@@ -1,5 +1,5 @@
 import requests
-from project.settings.config import SCRAP_KEY
+from app.settings.config import SCRAP_KEY
 def remain_budget():
     url = f"https://api.scrapfly.io/account?key={SCRAP_KEY}"
     response = requests.get(url)

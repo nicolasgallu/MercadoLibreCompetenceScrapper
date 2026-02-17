@@ -1,5 +1,5 @@
-from project.utils.logger import logger
-from project.database.db_manager import load_scrap
+from app.utils.logger import logger
+from app.database.db_manager import load_scrap
 import pandas as pd
 import json
 import os

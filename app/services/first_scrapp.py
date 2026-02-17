@@ -1,6 +1,6 @@
-from project.utils.logger import logger
-from project.database.db_manager import get_urls
-from project.settings.config import SCRAP_KEY
+from app.utils.logger import logger
+from app.database.db_manager import get_urls
+from app.settings.config import SCRAP_KEY
 import os, json, asyncio, uuid, random
 from scrapfly import ScrapflyClient, ScrapeConfig
 from datetime import datetime

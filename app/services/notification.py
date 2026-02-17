@@ -1,5 +1,5 @@
 import requests
-from project.settings.config import TOKEN_WHAPI, PHONE
+from app.settings.config import TOKEN_WHAPI, PHONE
 
 def enviar_mensaje_whapi(mensaje):
     url = "https://gate.whapi.cloud/messages/text"

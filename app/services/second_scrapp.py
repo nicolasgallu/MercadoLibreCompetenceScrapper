@@ -1,6 +1,6 @@
 from scrapfly import ScrapflyClient, ScrapeConfig, ScrapflyScrapeError
-from project.settings.config import SCRAP_KEY
-from project.utils.logger import logger
+from app.settings.config import SCRAP_KEY
+from app.utils.logger import logger
 from datetime import datetime
 from bs4 import BeautifulSoup
 import os, json, uuid, time

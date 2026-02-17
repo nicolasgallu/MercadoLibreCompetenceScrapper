@@ -1,5 +1,5 @@
 from flask import Flask
-from project.services.webhook import scrapping_event 
+from app.services.webhook import scrapping_event 
 
 def create_app():
     app = Flask(__name__)
