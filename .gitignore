@@ -1,0 +1,4 @@
+**__pycache__/
+venv-meli-competence-scrapper/
+test.py
+.env
