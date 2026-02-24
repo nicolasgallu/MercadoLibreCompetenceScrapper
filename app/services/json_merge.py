@@ -77,7 +77,7 @@ def merge_scraping():
     }
     merged_df = merged_df.rename(columns=column_mapping)
 
-    merged_df['price'] = merged_df['price'].apply(lambda x: 0 if x == '' else x)
+    merged_df['price'] = merged_df['price'].apply(lambda x: 0 if x == '' else int(x.replace('.', '')))
     merged_df['price_in_installments'] = merged_df['price_in_installments'].apply(lambda x: 0 if x == 'n/a' else x)
 
     load_scrap(merged_df.to_dict(orient="records"))
