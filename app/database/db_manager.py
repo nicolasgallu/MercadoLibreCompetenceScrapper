@@ -45,26 +45,82 @@ def get_urls():
 
 def load_scrap(result_list):
     """
+    Actualiza registros existentes en la tabla basándose en catalog_link.
     """
-    # Nombre de la tabla destino
     table_name = f"{MELI_SCHMA}.scrapped_competence"
 
-    with engine.begin() as conn:
-        # 1. Truncate explícito
-        logger.info(f"Limpiando la tabla {table_name}...")
-        conn.execute(text(f"TRUNCATE TABLE {table_name}"))
+    if not result_list:
+        logger.info("No hay datos para procesar.")
+        return
 
-        # 2. Insert masivo (Bulk Insert)
-        # Usamos nombres de parámetros que coincidan exactamente con las llaves de tus dicts
-        logger.info(f"Insertando {len(result_list)} registros.")
-        insert_query = text(f"""
-            INSERT INTO {table_name} (
-                title, price, competitor, price_in_installments, 
-                image, catalog_link, timestamp, status, api_cost_total
-            ) VALUES (
-                :title, :price, :competitor, :price_in_installments, 
-                :image, :catalog_link, :timestamp, :status, :api_cost_total
-            )
+    with engine.begin() as conn:
+        # Ya no hacemos TRUNCATE, porque queremos conservar los datos para actualizarlos
+        logger.info(f"Actualizando {len(result_list)} registros en {table_name}...")
+
+        # Usamos la sintaxis de UPDATE filtrando por catalog_link
+        update_query = text(f"""
+            UPDATE {table_name} 
+            SET 
+                title = :title, 
+                price = :price, 
+                competitor = :competitor, 
+                price_in_installments = :price_in_installments, 
+                image = :image, 
+                timestamp = :timestamp, 
+                status = :status, 
+                api_cost_total = :api_cost_total
+            WHERE catalog_link = :catalog_link
         """)
-        conn.execute(insert_query, result_list)
-        logger.info("Carga completada con éxito.")
+
+        result = conn.execute(update_query, result_list)
+        logger.info(f"Proceso completado. Filas afectadas: {result.rowcount}")
+
+
+def calculate_metrics():
+    """
+    Calcula costos, márgenes y beneficios en la tabla scrapped_competence.
+    """
+    table_name = f"{MELI_SCHMA}.scrapped_competence"
+    
+    query = text(f"""
+        UPDATE {table_name}
+        SET 
+            -- 1. Comisiones y Retornos
+            ml_commision = selling_price * ml_commision_percentage,
+            returns_cost = selling_price * estimated_returns_percentage,
+            
+            -- 2. Costo Total (Suma de todos los componentes de costo)
+            total_costs = (
+                product_cost + 
+                (selling_price * ml_commision_percentage) + -- ml_commision
+                shipping_cost + 
+                packaging_cost + 
+                (selling_price * estimated_returns_percentage) + -- returns_cost
+                withholdings_gross_income_tax + 
+                financial_cost
+            ),
+            
+            -- 3. Utilidad Neta
+            net_profit = selling_price - (
+                product_cost + 
+                (selling_price * ml_commision_percentage) + 
+                shipping_cost + 
+                packaging_cost + 
+                (selling_price * estimated_returns_percentage) + 
+                withholdings_gross_income_tax + 
+                financial_cost
+            ),
+            
+            -- 4. Márgenes (Evitando división por cero con NULLIF)
+            net_margin_percentage = (selling_price - total_costs) / NULLIF(selling_price, 0),
+            markup_percentage = (selling_price - total_costs) / NULLIF(product_cost, 0)
+    """)
+
+    try:
+        with engine.begin() as conn:
+            logger.info(f"Iniciando cálculo de métricas en {table_name}...")
+            result = conn.execute(query)
+            logger.info(f"Cálculos finalizados. Filas actualizadas: {result.rowcount}")
+    except Exception as e:
+        logger.error(f"Error al calcular métricas: {e}")
+        raise

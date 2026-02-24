@@ -1,5 +1,5 @@
 from app.utils.logger import logger
-from app.database.db_manager import load_scrap
+from app.database.db_manager import load_scrap,calculate_metrics
 import pandas as pd
 import json
 import os
@@ -18,7 +18,6 @@ OUTPUT_PATH = os.path.join(DATABASE_DIR, 'merged_results.json')
 # ──────────────────────────────────────────────────────────────
 def load_json_list(path):
     """Load a JSON file as a list of dicts."""
-    print("trying..")
     if not os.path.exists(path):
         return []
     
@@ -78,6 +77,9 @@ def merge_scraping():
     }
     merged_df = merged_df.rename(columns=column_mapping)
 
-    print(merged_df)
+    merged_df['price'] = merged_df['price'].apply(lambda x: 0 if x == '' else x)
+    merged_df['price_in_installments'] = merged_df['price_in_installments'].apply(lambda x: 0 if x == 'n/a' else x)
 
     load_scrap(merged_df.to_dict(orient="records"))
+
+    calculate_metrics()
