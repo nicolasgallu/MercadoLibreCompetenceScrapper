@@ -81,5 +81,3 @@ def merge_scraping():
     merged_df['price_in_installments'] = merged_df['price_in_installments'].apply(lambda x: 0 if x == 'n/a' else x)
 
     load_scrap(merged_df.to_dict(orient="records"))
-
-    calculate_metrics()
