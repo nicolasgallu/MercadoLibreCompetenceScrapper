@@ -1,5 +1,5 @@
 from app.utils.logger import logger
-from app.database.db_manager import load_scrap,calculate_metrics
+from app.database.db_manager import load_scrap
 import pandas as pd
 import json
 import os
@@ -77,7 +77,11 @@ def merge_scraping():
     }
     merged_df = merged_df.rename(columns=column_mapping)
 
+    print(merged_df)
+
     merged_df['price'] = merged_df['price'].apply(lambda x: 0 if x == '' else int(x.replace('.', '')))
     merged_df['price_in_installments'] = merged_df['price_in_installments'].apply(lambda x: 0 if x == 'n/a' else x)
+
+    print(merged_df)
 
     load_scrap(merged_df.to_dict(orient="records"))
