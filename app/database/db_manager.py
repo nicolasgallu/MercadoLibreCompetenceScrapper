@@ -2,6 +2,11 @@ from sqlalchemy import create_engine, text
 from google.cloud.sql.connector import Connector
 from app.settings.config import INSTANCE_DB, USER_DB, PASSWORD_DB, NAME_DB,  MELI_SCHMA
 from app.utils.logger import logger
+import gspread
+import traceback
+import sys
+from google.auth import default
+from app.utils.logger import logger
 
 ##!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
 ##CAMBIAR ESQUEMAS FIJOS A PARAMETROS 
@@ -78,78 +83,109 @@ def load_scrap(result_list):
 
 
 
-import gspread
-from google.auth import default
-from app.utils.logger import logger
-
 def update_sheets_catalogo(result_list):
     """
-    Sincroniza el result_list con la hoja 'Catalogo' de Google Sheets.
+    Versión con Debug Extendido para Google Sheets.
     """
+    logger.info(f"--- Iniciando Sincronización con Sheets ---")
+    
     if not result_list:
+        logger.warning("La lista de resultados está vacía. Abortando.")
         return
 
     try:
-        # 1. Autenticación automática usando las credenciales del Cloud Job
+        # 1. Verificar Identidad y Scopes
+        logger.info("Paso 1: Obteniendo credenciales por defecto...")
         scopes = [
             'https://www.googleapis.com/auth/spreadsheets',
             'https://www.googleapis.com/auth/drive'
         ]
-        credentials, _ = default(scopes=scopes)
+        credentials, project_id = default(scopes=scopes)
+        
+        # Log clave: ¿Quién está intentando entrar?
+        # Nota: Algunas cuentas no exponen el email directamente hasta refrescar, 
+        # pero intentaremos mostrarlo.
+        try:
+            logger.info(f"Intentando con Service Account: {credentials.service_account_email}")
+        except:
+            logger.info("No se pudo obtener el email de la Service Account antes de autorizar.")
+
+        # 2. Autorizar Cliente
+        logger.info("Paso 2: Autorizando cliente de gspread...")
         gc = gspread.authorize(credentials)
 
-        # 2. Abrir el documento y la hoja
+        # 3. Abrir el documento
         spreadsheet_id = "11EF4fqrGlRzbkYBn8v0wxjUbV48ZTfVWfPKQJZDuFok"
+        logger.info(f"Paso 3: Abriendo Spreadsheet ID: {spreadsheet_id}")
         sh = gc.open_by_key(spreadsheet_id)
+        
+        # 4. Acceder a la hoja
+        logger.info("Paso 4: Accediendo a la pestaña 'Catalogo'...")
         worksheet = sh.worksheet("Catalogo")
 
-        # 3. Obtener todos los datos actuales de la columna A (URLs) para mapear filas
-        # Esto evita hacer peticiones por cada registro (muy lento)
-        urls_in_sheet = worksheet.col_values(1)  # Columna A
-        
-        # 4. Preparar las actualizaciones
-        # Formato de columnas: A:url, B:title, C:price, D:competitor, E:price_in_installments, 
-        # F:image, G:timestamp, H:status, I:api_cost_total, J:remaining_credits
-        
+        # 5. Mapear URLs actuales
+        logger.info("Paso 5: Descargando valores de la Columna A para mapeo...")
+        urls_in_sheet = worksheet.col_values(1)
+        logger.info(f"Se encontraron {len(urls_in_sheet)} filas existentes en el Sheet.")
+
+        # 6. Preparar actualizaciones
         updates = []
+        logger.info(f"Paso 6: Procesando {len(result_list)} items del scraper...")
         
-        for item in result_list:
+        for i, item in enumerate(result_list):
+            # Log de seguridad para el primer item
+            if i == 0:
+                logger.debug(f"Estructura del primer item: {item.keys() if isinstance(item, dict) else 'NO ES DICT'}")
+
             catalog_link = item.get('catalog_link')
+            if not catalog_link:
+                logger.debug(f"Item #{i} ignorado: no tiene 'catalog_link'.")
+                continue
             
-            # Construimos la fila de datos
+            # Formateo de fila
             row_data = [
-                catalog_link,                          # A: url
-                item.get('title'),                     # B
-                item.get('price'),                     # C
-                item.get('competitor'),                # D
-                item.get('price_in_installments'),     # E
-                item.get('image'),                     # F
-                str(item.get('timestamp')),            # G (convertir a string para Sheets)
-                item.get('status'),                    # H
-                item.get('api_cost_total'),            # I
-                item.get('remaining_credits', 0)       # J (si no viene, ponemos 0)
+                catalog_link,
+                item.get('title', ''),
+                item.get('price', 0),
+                item.get('competitor', ''),
+                item.get('price_in_installments', ''),
+                item.get('image', ''),
+                str(item.get('timestamp', '')),
+                item.get('status', ''),
+                item.get('api_cost_total', 0),
+                item.get('remaining_credits', 0)
             ]
 
             if catalog_link in urls_in_sheet:
-                # Si existe, encontramos el índice (sumamos 1 porque Sheets empieza en 1)
                 row_idx = urls_in_sheet.index(catalog_link) + 1
-                # Definimos el rango de la fila (de A a J)
-                range_label = f"A{row_idx}:J{row_idx}"
-                updates.append({'range': range_label, 'values': [row_data]})
+                updates.append({
+                    'range': f"A{row_idx}:J{row_idx}",
+                    'values': [row_data]
+                })
             else:
-                # Si no existe, podrías decidir si añadirlo al final
-                # worksheet.append_row(row_data) # Opcional
-                logger.warning(f"URL no encontrada en Sheet para actualizar: {catalog_link}")
+                # Si quieres ver qué URLs faltan, descomenta la siguiente línea:
+                # logger.debug(f"URL no encontrada en Sheet: {catalog_link}")
+                pass
 
-        # 5. Ejecutar todas las actualizaciones en un solo lote (Batch Update)
+        # 7. Ejecutar Batch Update
         if updates:
+            logger.info(f"Paso 7: Enviando batch_update para {len(updates)} filas...")
             worksheet.batch_update(updates)
-            logger.info(f"Google Sheet actualizado: {len(updates)} filas modificadas.")
+            logger.info("¡Éxito! Google Sheet actualizado correctamente.")
+        else:
+            logger.warning("No se generaron actualizaciones. ¿Coinciden las URLs del scraper con las del Sheet?")
 
+    except gspread.exceptions.APIError as e:
+        logger.error(f"Error de API de Google: {e.response.text}")
     except Exception as e:
-        logger.error(f"Error actualizando Google Sheets: {e}")
-
-# --- Integración en tu función original ---
+        # Aquí capturamos TODO con lujo de detalle
+        logger.error("--- ERROR CRÍTICO EN GOOGLE SHEETS ---")
+        logger.error(f"Tipo de excepción: {type(e).__name__}")
+        logger.error(f"Mensaje de error: {str(e)}")
+        logger.error("Traceback completo:")
+        logger.error(traceback.format_exc())
+    finally:
+        logger.info("--- Fin del proceso de Sheets ---")
 
 def load_scrap_gsheet(result_list):
     logger.info("Iniciando actualización en Google Sheets...")
