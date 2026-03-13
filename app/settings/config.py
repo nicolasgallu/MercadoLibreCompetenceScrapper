@@ -15,3 +15,8 @@ TOKEN_WHAPI=os.getenv("TOKEN_WHAPI")
 PHONE=os.getenv("PHONE")
 
 SECRET_GUIAS=os.getenv("SECRET_GUIAS")
+
+# Configuration - You can move these to your config.py
+PROJECT_ID = os.getenv("PROJECT_ID")
+REGION = os.getenv("REGION")
+JOB_NAME = os.getenv("JOB_NAME")
