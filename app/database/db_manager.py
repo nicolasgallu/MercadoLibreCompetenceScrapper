@@ -30,7 +30,7 @@ def get_urls():
         logger.info("Extracting Catalog urls.")
         result = conn.execute(
             text(f"""
-                SELECT catalog_link FROM {NAME_DB}.product_catalog_sync
+                SELECT distinct catalog_link FROM {NAME_DB}.scrapped_competence
                 WHERE catalog_link is not null;
             """)
         )
