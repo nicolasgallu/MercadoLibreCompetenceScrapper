@@ -1,5 +1,5 @@
 from app.utils.logger import logger
-from app.database.db_manager import load_scrap
+from app.database.db_manager import load_scrap,load_scrap_gsheet
 import pandas as pd
 import json
 import os
@@ -85,3 +85,4 @@ def merge_scraping():
     print(merged_df)
 
     load_scrap(merged_df.to_dict(orient="records"))
+    load_scrap_gsheet(merged_df.to_dict(orient="records"))
