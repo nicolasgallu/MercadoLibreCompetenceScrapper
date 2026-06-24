@@ -2,3 +2,4 @@
 venv-meli-competence-scrapper/
 test.py
 .env
+app/tests

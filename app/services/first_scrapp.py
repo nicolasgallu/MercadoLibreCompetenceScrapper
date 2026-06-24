@@ -51,7 +51,7 @@ async def scrape_one(client, url, discard_phrase):
             url=url,
             asp=True,
             render_js=True,
-            wait_for_selector="h1.ui-pdp-title",
+            rendering_stage="complete",
             proxy_pool="public_residential_pool",
             country="ar",
             lang=["es-AR", "es"],
