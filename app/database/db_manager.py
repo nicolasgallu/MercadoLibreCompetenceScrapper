@@ -63,17 +63,17 @@ def load_scrap(result_list):
         logger.info(f"Actualizando {len(result_list)} registros en {table_name}...")
 
         conn.execute(text(f"""
-            CREATE TEMP TABLE {temp_table} (
-                catalog_link TEXT,
-                title TEXT,
-                price NUMERIC,
-                competitor TEXT,
-                price_in_installments NUMERIC,
-                image TEXT,
-                timestamp TIMESTAMP,
-                status TEXT,
-                api_cost_total NUMERIC
-            ) ON COMMIT DROP
+            CREATE TEMPORARY TABLE {temp_table} (
+                catalog_link VARCHAR(1000),
+                title VARCHAR(1000),
+                price INT,
+                competitor VARCHAR(255),
+                price_in_installments VARCHAR(255),
+                image VARCHAR(1000),
+                timestamp DATETIME,
+                status VARCHAR(100),
+                api_cost_total INT
+            )
         """))
 
         insert_temp_query = text(f"""
@@ -126,16 +126,15 @@ def load_scrap(result_list):
                 status,
                 api_cost_total
             FROM {temp_table}
-            ON CONFLICT (catalog_link) DO UPDATE
-            SET
-                title = EXCLUDED.title,
-                price = EXCLUDED.price,
-                competitor = EXCLUDED.competitor,
-                price_in_installments = EXCLUDED.price_in_installments,
-                image = EXCLUDED.image,
-                timestamp = EXCLUDED.timestamp,
-                status = EXCLUDED.status,
-                api_cost_total = EXCLUDED.api_cost_total
+            ON DUPLICATE KEY UPDATE
+                title = VALUES(title),
+                price = VALUES(price),
+                competitor = VALUES(competitor),
+                price_in_installments = VALUES(price_in_installments),
+                image = VALUES(image),
+                timestamp = VALUES(timestamp),
+                status = VALUES(status),
+                api_cost_total = VALUES(api_cost_total)
         """)
 
         result = conn.execute(upsert_query)
