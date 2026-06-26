@@ -79,12 +79,11 @@ def parse_product(url, response):
         "_api_cost": api_cost(response),
     }
 
-    if parsed["title"] == "n/a":
+    if parsed["title"] == "n/a" or parsed["competitor"] == "n/a":
         parsed["_status"] = "failed"
-        logger.error(f"Failed to parse title.")
+        logger.error(f"Failed to parse title or competitor.")
     else:
         logger.info(f"Successed retry..")
-    
     return parsed
 
 # ──────────────────────────────────────────────────────────────────────────────

@@ -103,10 +103,10 @@ async def scrape_one(client, url, discard_phrase):
             "_api_cost": api_cost(res),
         }
 
-        # 5. Validate if Failed
-        if parsed["title"] == "n/a":
+        # 5. Validate if Failed by title or competitor
+        if parsed["title"] == "n/a" or parsed["competitor"] == "n/a":
             parsed["_status"] = "failed"
-            logger.error(f"Failed to parse title.")
+            logger.error(f"Failed to parse title or competitor.")
             return parsed
         
         # 6. Validate if Successed
