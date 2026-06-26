@@ -3,7 +3,7 @@ from app.settings.config import SCRAP_KEY
 from app.utils.logger import logger
 from datetime import datetime
 from bs4 import BeautifulSoup
-import os, json, uuid, time
+import os, json, uuid, time, asyncio
 
 # ──────────────────────────────────────────────────────────────────────────────
 # PATHS / CONSTANTS / VARIABLES
@@ -33,6 +33,11 @@ def read_failed():
 
 def api_cost(response):
     return getattr(getattr(response, "response", None), "headers", {}).get("X-Scrapfly-Api-Cost", "n/a")
+
+def is_dom_selector_error(e):
+    error_code = getattr(e, "error_code", "") or ""
+    error_msg = str(e)
+    return "DOM_SELECTOR_NOT_FOUND" in error_code or "DOM_SELECTOR_NOT_FOUND" in error_msg
 
 def parse_product(url, response):
     html = response.content
@@ -90,6 +95,7 @@ def scrape_attempt(client, url, config, stage):
         # Remove timeout if retry=True
         if config.get("retry", False):
             config.pop("timeout", None)
+
         response = client.scrape(ScrapeConfig(url=url, **config))
         parsed = parse_product(url, response)
         parsed["retry_stage"] = stage
@@ -98,6 +104,44 @@ def scrape_attempt(client, url, config, stage):
         return parsed
 
     except ScrapflyScrapeError as e:
+        if is_dom_selector_error(e):
+            logger.warning("DOM selector not found. Trying special rendering retry..")
+
+            try:
+                special_config = config.copy()
+                special_config.pop("wait_for_selector", None)
+                special_config["rendering_wait"] = 8000
+                special_config["auto_scroll"] = True
+                special_config["session"] = f"DOM-{uuid.uuid4()}"
+
+                if special_config.get("retry", False):
+                    special_config.pop("timeout", None)
+
+                response = client.scrape(ScrapeConfig(url=url, **special_config))
+                parsed = parse_product(url, response)
+                parsed["retry_stage"] = f"{stage}_dom_retry"
+                parsed["failure_reason"] = None if parsed["_status"] in ["successed", "discarded"] else "parse_failed"
+                scrapped_results.append(parsed)
+                return parsed
+
+            except Exception as dom_e:
+                logger.error("DOM SPECIAL RETRY FAILED..")
+                parsed = {
+                    "title": "n/a",
+                    "price": "",
+                    "competitor": "n/a",
+                    "price_in_installments": "n/a",
+                    "image": "n/a",
+                    "_url": url,
+                    "_timestamp": now_ts(),
+                    "_status": "DOM SPECIAL RETRY FAILED",
+                    "_api_cost": "n/a",
+                    "retry_stage": f"{stage}_dom_retry",
+                    "failure_reason": f"DOM_RETRY {type(dom_e).__name__}",
+                }
+                scrapped_results.append(parsed)
+                return parsed
+
         logger.error("SCRAPFLY ERROR..")
         parsed = {
             "title": "n/a",
@@ -136,7 +180,9 @@ def scrape_attempt(client, url, config, stage):
 # ──────────────────────────────────────────────────────────────────────────────
 # CORE: scrape a single failed URL
 # ──────────────────────────────────────────────────────────────────────────────
-def scrape_one(client, session_id, url):
+def scrape_one(client, url):
+    session_id = f"FAILED-{uuid.uuid4()}"
+
     base = dict(
         asp=True,
         render_js=True,
@@ -151,35 +197,55 @@ def scrape_one(client, session_id, url):
 
     stages = [
         ("first_attempt", base.copy()),
-        ("second_attempt", {**base, "rendering_wait": 10_000, "auto_scroll": True}),
-        ("heavy_retry", {**base, "rendering_wait": 12_000, "auto_scroll": True, "session": f"HEAVY-{uuid.uuid4()}"}),
-        ("rescue_pass", {**base, "rendering_wait": 15_000, "auto_scroll": True, "session": f"RESCUE-{uuid.uuid4()}"}),
-        ("deep_rescue", {**base, "rendering_wait": 15_000, "wait_for_selector": None, "proxy_pool": "public_residential_pool", "session": f"DEEP-{uuid.uuid4()}"})
+        ("second_attempt", {**base, "auto_scroll": True}),
+        ("heavy_retry", {**base, "auto_scroll": True, "session": f"HEAVY-{uuid.uuid4()}"}),
+        ("rescue_pass", {**base, "auto_scroll": True, "session": f"RESCUE-{uuid.uuid4()}"}),
+        ("deep_rescue", {**base, "wait_for_selector": None, "proxy_pool": "public_residential_pool", "session": f"DEEP-{uuid.uuid4()}"})
     ]
 
-    for stage_name, cfg in stages:
+    for stage_name, cfg in stages: 
         logger.info(f"{stage_name}..")
         out = scrape_attempt(client, url, cfg, stage_name)
         if out["_status"] in ["successed", "discarded"]:
             return
+        else:
+            time.sleep(2)
     logger.info(f"All retries failed..")
+
+# ──────────────────────────────────────────────────────────────────────────────
+# CORE ASYNC WRAPPER
+# ──────────────────────────────────────────────────────────────────────────────
+async def scrape_one_async(semaphore, client, url, i, total):
+    async with semaphore:
+        logger.info(f"Retrying {i}/{total}..")
+        await asyncio.to_thread(scrape_one, client, url)
 
 # ──────────────────────────────────────────────────────────────────────────────
 # ORCHESTRATOR
 # ──────────────────────────────────────────────────────────────────────────────
-def scrape_all_failed(urls):
+async def scrape_all_failed_async(urls):
     client = ScrapflyClient(key=SCRAP_KEY)
-    session_id = f"FAILED-{uuid.uuid4()}"
+    semaphore = asyncio.Semaphore(5)
+
     logger.info(f"Retrying {len(urls)} failed URLs..")
-    for url in urls:
-        scrape_one(client, session_id, url)
-        time.sleep(0.8)
+
+    tasks = [
+        scrape_one_async(semaphore, client, url, i, len(urls))
+        for i, url in enumerate(urls, start=1)
+    ]
+
+    await asyncio.gather(*tasks)
+
     return scrapped_results
+
+def scrape_all_failed(urls):
+    return asyncio.run(scrape_all_failed_async(urls))
 
 # ──────────────────────────────────────────────────────────────────────────────
 # MAIN ENTRY
 # ──────────────────────────────────────────────────────────────────────────────
 def scrap_urls_failed():
+    time.sleep(30)
     logger.info("START - Second Scrapping Method.")
     failed_urls = read_failed()
     if not failed_urls:

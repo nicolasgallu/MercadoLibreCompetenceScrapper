@@ -51,7 +51,7 @@ async def scrape_one(client, url, discard_phrase):
             url=url,
             asp=True,
             render_js=True,
-            rendering_stage="complete",
+            wait_for_selector="h1.ui-pdp-title, .ui-seller-data-header__title",
             proxy_pool="public_residential_pool",
             country="ar",
             lang=["es-AR", "es"],
@@ -134,7 +134,7 @@ async def scrape_all(urls):
     Returns results, failures, and discarded URLs.
     """
     client = ScrapflyClient(key=SCRAP_KEY)
-    sem = asyncio.Semaphore(5)  # limit concurrency
+    sem = asyncio.Semaphore(20)  # limit concurrency
 
     results = []
     # --- shared counter ---
@@ -150,7 +150,7 @@ async def scrape_all(urls):
                 counter[0] += 1
                 logger.info(f"[{counter[0]}/{total}] finished..")
             # add think-time delay
-            await asyncio.sleep(random.uniform(1.5, 3.5))
+            await asyncio.sleep(random.uniform(1.5, 2.5))
 
     await asyncio.gather(*(job(u) for u in urls))
     return results

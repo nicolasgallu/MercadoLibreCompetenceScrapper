@@ -1,6 +1,6 @@
 from sqlalchemy import create_engine, text
 from google.cloud.sql.connector import Connector
-from app.settings.config import INSTANCE_DB, USER_DB, PASSWORD_DB, NAME_DB,  MELI_SCHMA
+from app.settings.config import INSTANCE_DB, USER_DB, PASSWORD_DB, MELI_SCHMA
 from app.utils.logger import logger
 import gspread
 import traceback
@@ -19,7 +19,7 @@ def getconn():
         "pymysql",
         user=USER_DB,
         password=PASSWORD_DB,
-        db=NAME_DB,
+        db=MELI_SCHMA,
     )   
 
 engine = create_engine(
@@ -35,7 +35,7 @@ def get_urls():
         logger.info("Extracting Catalog urls.")
         result = conn.execute(
             text(f"""
-                SELECT distinct catalog_link FROM {NAME_DB}.scrapped_competence
+                SELECT distinct catalog_link FROM {MELI_SCHMA}.scrapped_competence
                 WHERE catalog_link is not null;
             """)
         )
@@ -50,34 +50,95 @@ def get_urls():
 
 def load_scrap(result_list):
     """
-    Actualiza registros existentes en la tabla basándose en catalog_link.
+    Actualiza o inserta registros en la tabla basándose en catalog_link.
     """
     table_name = f"{MELI_SCHMA}.scrapped_competence"
+    temp_table = "tmp_scrapped_competence"
 
     if not result_list:
         logger.info("No hay datos para procesar.")
         return
 
     with engine.begin() as conn:
-        # Ya no hacemos TRUNCATE, porque queremos conservar los datos para actualizarlos
         logger.info(f"Actualizando {len(result_list)} registros en {table_name}...")
 
-        # Usamos la sintaxis de UPDATE filtrando por catalog_link
-        update_query = text(f"""
-            UPDATE {table_name} 
-            SET 
-                title = :title, 
-                price = :price, 
-                competitor = :competitor, 
-                price_in_installments = :price_in_installments, 
-                image = :image, 
-                timestamp = :timestamp, 
-                status = :status, 
-                api_cost_total = :api_cost_total
-            WHERE catalog_link = :catalog_link
+        conn.execute(text(f"""
+            CREATE TEMP TABLE {temp_table} (
+                catalog_link TEXT,
+                title TEXT,
+                price NUMERIC,
+                competitor TEXT,
+                price_in_installments NUMERIC,
+                image TEXT,
+                timestamp TIMESTAMP,
+                status TEXT,
+                api_cost_total NUMERIC
+            ) ON COMMIT DROP
+        """))
+
+        insert_temp_query = text(f"""
+            INSERT INTO {temp_table} (
+                catalog_link,
+                title,
+                price,
+                competitor,
+                price_in_installments,
+                image,
+                timestamp,
+                status,
+                api_cost_total
+            )
+            VALUES (
+                :catalog_link,
+                :title,
+                :price,
+                :competitor,
+                :price_in_installments,
+                :image,
+                :timestamp,
+                :status,
+                :api_cost_total
+            )
         """)
 
-        result = conn.execute(update_query, result_list)
+        conn.execute(insert_temp_query, result_list)
+
+        upsert_query = text(f"""
+            INSERT INTO {table_name} (
+                catalog_link,
+                title,
+                price,
+                competitor,
+                price_in_installments,
+                image,
+                timestamp,
+                status,
+                api_cost_total
+            )
+            SELECT
+                catalog_link,
+                title,
+                price,
+                competitor,
+                price_in_installments,
+                image,
+                timestamp,
+                status,
+                api_cost_total
+            FROM {temp_table}
+            ON CONFLICT (catalog_link) DO UPDATE
+            SET
+                title = EXCLUDED.title,
+                price = EXCLUDED.price,
+                competitor = EXCLUDED.competitor,
+                price_in_installments = EXCLUDED.price_in_installments,
+                image = EXCLUDED.image,
+                timestamp = EXCLUDED.timestamp,
+                status = EXCLUDED.status,
+                api_cost_total = EXCLUDED.api_cost_total
+        """)
+
+        result = conn.execute(upsert_query)
         logger.info(f"Proceso completado. Filas afectadas: {result.rowcount}")
 
 
