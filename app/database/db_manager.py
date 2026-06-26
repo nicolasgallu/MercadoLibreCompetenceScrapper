@@ -103,7 +103,24 @@ def load_scrap(result_list):
 
         conn.execute(insert_temp_query, result_list)
 
-        upsert_query = text(f"""
+        update_query = text(f"""
+            UPDATE {table_name} t
+            JOIN {temp_table} tmp
+                ON t.catalog_link = tmp.catalog_link
+            SET
+                t.title = tmp.title,
+                t.price = tmp.price,
+                t.competitor = tmp.competitor,
+                t.price_in_installments = tmp.price_in_installments,
+                t.image = tmp.image,
+                t.timestamp = tmp.timestamp,
+                t.status = tmp.status,
+                t.api_cost_total = tmp.api_cost_total
+        """)
+
+        update_result = conn.execute(update_query)
+
+        insert_query = text(f"""
             INSERT INTO {table_name} (
                 catalog_link,
                 title,
@@ -116,31 +133,27 @@ def load_scrap(result_list):
                 api_cost_total
             )
             SELECT
-                catalog_link,
-                title,
-                price,
-                competitor,
-                price_in_installments,
-                image,
-                timestamp,
-                status,
-                api_cost_total
-            FROM {temp_table}
-            ON DUPLICATE KEY UPDATE
-                title = VALUES(title),
-                price = VALUES(price),
-                competitor = VALUES(competitor),
-                price_in_installments = VALUES(price_in_installments),
-                image = VALUES(image),
-                timestamp = VALUES(timestamp),
-                status = VALUES(status),
-                api_cost_total = VALUES(api_cost_total)
+                tmp.catalog_link,
+                tmp.title,
+                tmp.price,
+                tmp.competitor,
+                tmp.price_in_installments,
+                tmp.image,
+                tmp.timestamp,
+                tmp.status,
+                tmp.api_cost_total
+            FROM {temp_table} tmp
+            LEFT JOIN {table_name} t
+                ON t.catalog_link = tmp.catalog_link
+            WHERE t.catalog_link IS NULL
         """)
 
-        result = conn.execute(upsert_query)
-        logger.info(f"Proceso completado. Filas afectadas: {result.rowcount}")
+        insert_result = conn.execute(insert_query)
 
-
+        logger.info(
+            f"Proceso completado. Filas actualizadas: {update_result.rowcount}. "
+            f"Filas insertadas: {insert_result.rowcount}"
+        )
 
 
 def update_sheets_catalogo(result_list):
