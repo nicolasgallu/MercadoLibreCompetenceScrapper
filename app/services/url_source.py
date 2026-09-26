@@ -77,17 +77,36 @@ def load_urls_from_file(path: str = None) -> list:
 
 def load_urls(file_path: str = None) -> list:
     """
-    Explicit file wins; otherwise the database when configured;
-    otherwise the default URL file.
+    Explicit file wins (local dev); otherwise the DATABASE IS THE ONLY
+    SOURCE. When the DB is configured we never silently fall back to a
+    file - failures raise with a clear message instead of a confusing
+    FileNotFoundError.
     """
     if file_path:
         return load_urls_from_file(file_path)
-    if db_manager.is_db_configured():
+    if not db_manager.is_db_configured():
+        # local development without a DB (urls.txt); but on Cloud Run the
+        # database env vars MUST be set - give an actionable error instead
+        # of a confusing FileNotFoundError.
         try:
-            urls = load_urls_from_db()
-            if urls:
-                return urls
-            logger.warning("Database returned no URLs - falling back to file source")
-        except Exception as exc:
-            logger.warning("Database source failed (%s) - falling back to file source", exc)
-    return load_urls_from_file()
+            return load_urls_from_file()
+        except FileNotFoundError:
+            raise RuntimeError(
+                "No database configured (set INSTANCE_DB/USER_DB/PASSWORD_DB/"
+                "NAME_DB or MYSQL_HOST/MYSQL_USER/MYSQL_PASSWORD in the Cloud "
+                "Run job env vars) and no URL file found."
+            ) from None
+    try:
+        urls = load_urls_from_db()
+    except Exception as exc:
+        raise RuntimeError(
+            f"Failed to load URLs from the database "
+            f"({type(exc).__name__}: {exc}). Check INSTANCE_DB/USER_DB/"
+            f"PASSWORD_DB/NAME_DB, LEGACY_TABLE and the service account "
+            f"permissions."
+        ) from exc
+    if not urls:
+        raise RuntimeError(
+            f"No URLs found in {cfg.LEGACY_TABLE}.catalog_link - nothing to scrape."
+        )
+    return urls

@@ -80,3 +80,4 @@ def scrapping():
         logger.info("Pipeline finished.")
     except Exception:
         logger.exception("Pipeline crashed - the background job did not complete.")
+        raise  # exit non-zero so the Cloud Run job is marked FAILED

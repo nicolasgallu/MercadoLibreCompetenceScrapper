@@ -450,3 +450,50 @@ def test_legacy_pipeline_end_to_end():
         engine.dispose()
         dm._engine = None
         monkeypatch.undo()
+
+
+# ── load_urls: DB is the only source when configured ─────────
+def test_load_urls_raises_when_db_source_fails(monkeypatch):
+    import app.database.db_manager as dm
+    import app.services.url_source as us
+    import app.settings.config as cfg
+
+    monkeypatch.setattr(cfg, "MYSQL_HOST", "127.0.0.1")
+    monkeypatch.setattr(cfg, "MYSQL_PORT", 3306)
+    monkeypatch.setattr(cfg, "MYSQL_USER", "scraper")
+    monkeypatch.setattr(cfg, "MYSQL_PASSWORD", "scraperpass")
+    monkeypatch.setattr(cfg, "MYSQL_NAME", "scrapfly_test")
+
+    def boom():
+        raise RuntimeError("connection refused")
+    monkeypatch.setattr(us.db_manager, "get_legacy_urls", boom)
+
+    with pytest.raises(RuntimeError, match="Failed to load URLs from the database"):
+        us.load_urls()
+
+
+def test_load_urls_raises_when_db_has_no_urls(monkeypatch):
+    import app.services.url_source as us
+    import app.settings.config as cfg
+
+    monkeypatch.setattr(cfg, "MYSQL_HOST", "127.0.0.1")
+    monkeypatch.setattr(cfg, "MYSQL_PORT", 3306)
+    monkeypatch.setattr(cfg, "MYSQL_USER", "scraper")
+    monkeypatch.setattr(cfg, "MYSQL_PASSWORD", "scraperpass")
+    monkeypatch.setattr(cfg, "MYSQL_NAME", "scrapfly_test")
+    monkeypatch.setattr(us.db_manager, "get_legacy_urls", lambda: [])
+
+    with pytest.raises(RuntimeError, match="No URLs found"):
+        us.load_urls()
+
+
+def test_load_urls_clear_error_when_no_db_and_no_file(monkeypatch):
+    import app.services.url_source as us
+    import app.settings.config as cfg
+
+    monkeypatch.setattr(cfg, "INSTANCE_DB", "")
+    monkeypatch.setattr(cfg, "MYSQL_HOST", "")
+    monkeypatch.setattr(cfg, "URLS_FILE", "/nonexistent/urls.txt")
+
+    with pytest.raises(RuntimeError, match="No database configured"):
+        us.load_urls()
