@@ -1,265 +1,300 @@
+"""
+MySQL access layer.
+
+Connects either to a plain MySQL server (MYSQL_HOST / MYSQL_USER / ...)
+or to Google Cloud SQL via the GCP connector (INSTANCE_DB / ...), both
+configured through env vars.
+
+Table assumptions (placeholders until the real schema is designed — the
+names are configurable via env):
+
+  scraping_urls         (source)      id, url, status, created_at, updated_at
+  scraping_results      (results)     id, url, status, data_scrapped JSON,
+                                      created_at, updated_at   (UNIQUE KEY on url)
+  scraping_field_config (config)      one row per extraction rule
+
+See sql/schema.sql for the DDL + seed rows.
+"""
+import json
+
 from sqlalchemy import create_engine, text
-from google.cloud.sql.connector import Connector
-from app.settings.config import INSTANCE_DB, USER_DB, PASSWORD_DB, MELI_SCHMA
-from app.utils.logger import logger
-import gspread
-import traceback
-import sys
-from google.auth import default
+
+from app.settings import config as cfg
 from app.utils.logger import logger
 
-##!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-##CAMBIAR ESQUEMAS FIJOS A PARAMETROS 
-##!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+_engine = None
 
-def getconn():
-    connector = Connector() 
-    return connector.connect(
-        INSTANCE_DB,
-        "pymysql",
-        user=USER_DB,
-        password=PASSWORD_DB,
-        db=MELI_SCHMA,
-    )   
 
-engine = create_engine(
-        "mysql+pymysql://",
-        creator=getconn,
-        pool_pre_ping=True,
-        pool_size=5,
-        max_overflow=2,
-    )
+def _quoted(table: str) -> str:
+    """Quote `schema`.`table` (or just `table`) safely for SQL."""
+    return ".".join(f"`{part}`" for part in table.split(".") if part)
 
-def get_urls():
-    with engine.begin() as conn:
-        logger.info("Extracting Catalog urls.")
-        result = conn.execute(
-            text(f"""
-                SELECT distinct catalog_link FROM {MELI_SCHMA}.scrapped_competence
-                WHERE catalog_link is not null;
-            """)
-        )
-        dataraw = [dict(row).get('catalog_link') for row in result.mappings()]
-        if dataraw:
-            logger.info(f"URL's ready to scrapp: {len(dataraw)}")
-            return dataraw
+
+def is_db_configured() -> bool:
+    plain = bool(cfg.MYSQL_HOST and cfg.MYSQL_USER)
+    cloud = bool(cfg.INSTANCE_DB and cfg.USER_DB and cfg.PASSWORD_DB and cfg.NAME_DB)
+    return plain or cloud
+
+
+def get_engine():
+    """
+    Lazily create the SQLAlchemy engine. Not built at import time, so the
+    rest of the app works fine without database credentials.
+    """
+    global _engine
+    if _engine is None:
+        if cfg.MYSQL_HOST and cfg.MYSQL_USER:
+            db_name = cfg.MYSQL_NAME or cfg.NAME_DB or "scrapfly"
+            url = (
+                f"mysql+pymysql://{cfg.MYSQL_USER}:{cfg.MYSQL_PASSWORD or ''}"
+                f"@{cfg.MYSQL_HOST}:{cfg.MYSQL_PORT}/{db_name}?charset=utf8mb4"
+            )
+            logger.info("Connecting to MySQL at %s:%s/%s",
+                        cfg.MYSQL_HOST, cfg.MYSQL_PORT, db_name)
+            _engine = create_engine(url, pool_pre_ping=True, pool_size=5, max_overflow=2)
+        elif cfg.INSTANCE_DB:
+            if cfg.SERVICE_ACCOUNT_FILE:
+                import os as _os
+                _os.environ["GOOGLE_APPLICATION_CREDENTIALS"] = cfg.SERVICE_ACCOUNT_FILE
+                logger.info("Using service account file %s for Cloud SQL auth",
+                            cfg.SERVICE_ACCOUNT_FILE)
+            from google.cloud.sql.connector import Connector
+
+            connector = Connector()
+
+            def getconn():
+                return connector.connect(
+                    cfg.INSTANCE_DB,
+                    "pymysql",
+                    user=cfg.USER_DB,
+                    password=cfg.PASSWORD_DB,
+                    db=cfg.NAME_DB,
+                )
+
+            _engine = create_engine(
+                "mysql+pymysql://",
+                creator=getconn,
+                pool_pre_ping=True,
+                pool_size=5,
+                max_overflow=2,
+            )
         else:
-            return []
-        
-
-
-def load_scrap(result_list):
-    """
-    Actualiza o inserta registros en la tabla basándose en catalog_link.
-    """
-    table_name = f"{MELI_SCHMA}.scrapped_competence"
-    temp_table = "tmp_scrapped_competence"
-
-    if not result_list:
-        logger.info("No hay datos para procesar.")
-        return
-
-    with engine.begin() as conn:
-        logger.info(f"Actualizando {len(result_list)} registros en {table_name}...")
-
-        conn.execute(text(f"""
-            CREATE TEMPORARY TABLE {temp_table} (
-                catalog_link VARCHAR(1000),
-                title VARCHAR(1000),
-                price INT,
-                competitor VARCHAR(255),
-                price_in_installments VARCHAR(255),
-                image VARCHAR(1000),
-                timestamp DATETIME,
-                status VARCHAR(100),
-                api_cost_total INT
+            raise RuntimeError(
+                "No database configured: set MYSQL_HOST/MYSQL_USER/MYSQL_PASSWORD "
+                "or INSTANCE_DB/USER_DB/PASSWORD_DB/NAME_DB"
             )
-        """))
-
-        insert_temp_query = text(f"""
-            INSERT INTO {temp_table} (
-                catalog_link,
-                title,
-                price,
-                competitor,
-                price_in_installments,
-                image,
-                timestamp,
-                status,
-                api_cost_total
-            )
-            VALUES (
-                :catalog_link,
-                :title,
-                :price,
-                :competitor,
-                :price_in_installments,
-                :image,
-                :timestamp,
-                :status,
-                :api_cost_total
-            )
-        """)
-
-        conn.execute(insert_temp_query, result_list)
-
-        update_query = text(f"""
-            UPDATE {table_name} t
-            JOIN {temp_table} tmp
-                ON t.catalog_link = tmp.catalog_link
-            SET
-                t.title = tmp.title,
-                t.price = tmp.price,
-                t.competitor = tmp.competitor,
-                t.price_in_installments = tmp.price_in_installments,
-                t.image = tmp.image,
-                t.timestamp = tmp.timestamp,
-                t.status = tmp.status,
-                t.api_cost_total = tmp.api_cost_total
-        """)
-
-        update_result = conn.execute(update_query)
-
-        insert_query = text(f"""
-            INSERT INTO {table_name} (
-                catalog_link,
-                title,
-                price,
-                competitor,
-                price_in_installments,
-                image,
-                timestamp,
-                status,
-                api_cost_total
-            )
-            SELECT
-                tmp.catalog_link,
-                tmp.title,
-                tmp.price,
-                tmp.competitor,
-                tmp.price_in_installments,
-                tmp.image,
-                tmp.timestamp,
-                tmp.status,
-                tmp.api_cost_total
-            FROM {temp_table} tmp
-            LEFT JOIN {table_name} t
-                ON t.catalog_link = tmp.catalog_link
-            WHERE t.catalog_link IS NULL
-        """)
-
-        insert_result = conn.execute(insert_query)
-
-        logger.info(
-            f"Proceso completado. Filas actualizadas: {update_result.rowcount}. "
-            f"Filas insertadas: {insert_result.rowcount}"
-        )
+    return _engine
 
 
-def update_sheets_catalogo(result_list):
+# ──────────────────────────────────────────────────────────────
+# SOURCE: URLs to scrape
+# ──────────────────────────────────────────────────────────────
+def get_source_urls() -> list:
     """
-    Versión con Debug Extendido para Google Sheets.
+    Extract the distinct URLs to scrape from the source table.
+
+    Placeholder query: adapt the WHERE clause once the real table schema
+    exists (e.g. filter by a status/active column).
     """
-    logger.info(f"--- Iniciando Sincronización con Sheets ---")
-    
-    if not result_list:
-        logger.warning("La lista de resultados está vacía. Abortando.")
-        return
+    table = _quoted(cfg.SCRAPE_URLS_TABLE)
+    column = cfg.SCRAPE_URL_COLUMN
+    with get_engine().connect() as conn:
+        result = conn.execute(text(
+            f"SELECT DISTINCT `{column}` AS url FROM {table} "
+            f"WHERE `{column}` IS NOT NULL AND `{column}` != ''"
+        ))
+        urls = [row.url for row in result.mappings()]
+        logger.info("Loaded %d URL(s) from %s.%s", len(urls), table, column)
+        return urls
 
-    try:
-        # 1. Verificar Identidad y Scopes
-        logger.info("Paso 1: Obteniendo credenciales por defecto...")
-        scopes = [
-            'https://www.googleapis.com/auth/spreadsheets',
-            'https://www.googleapis.com/auth/drive'
-        ]
-        credentials, project_id = default(scopes=scopes)
-        
-        # Log clave: ¿Quién está intentando entrar?
-        # Nota: Algunas cuentas no exponen el email directamente hasta refrescar, 
-        # pero intentaremos mostrarlo.
-        try:
-            logger.info(f"Intentando con Service Account: {credentials.service_account_email}")
-        except:
-            logger.info("No se pudo obtener el email de la Service Account antes de autorizar.")
 
-        # 2. Autorizar Cliente
-        logger.info("Paso 2: Autorizando cliente de gspread...")
-        gc = gspread.authorize(credentials)
 
-        # 3. Abrir el documento
-        spreadsheet_id = "11EF4fqrGlRzbkYBn8v0wxjUbV48ZTfVWfPKQJZDuFok"
-        logger.info(f"Paso 3: Abriendo Spreadsheet ID: {spreadsheet_id}")
-        sh = gc.open_by_key(spreadsheet_id)
-        
-        # 4. Acceder a la hoja
-        logger.info("Paso 4: Accediendo a la pestaña 'Catalogo'...")
-        worksheet = sh.worksheet("Catalogo")
+# ──────────────────────────────────────────────────────────────
+# LEGACY FLAT TABLE (scrapped_competence)
+#
+# In legacy mode this table is BOTH the URL source and the results
+# target. Kept exactly compatible with the pre-existing process.
+# ──────────────────────────────────────────────────────────────
+def get_legacy_urls() -> list:
+    """
+    Extract the distinct catalog URLs to scrape from the legacy table.
+    """
+    table = _quoted(cfg.LEGACY_TABLE)
+    with get_engine().connect() as conn:
+        result = conn.execute(text(
+            f"SELECT DISTINCT catalog_link FROM {table} "
+            f"WHERE catalog_link IS NOT NULL AND catalog_link != ''"
+        ))
+        urls = [row.catalog_link for row in result.mappings()]
+        logger.info("Loaded %d URL(s) from %s.catalog_link", len(urls), table)
+        return urls
 
-        # 5. Mapear URLs actuales
-        logger.info("Paso 5: Descargando valores de la Columna A para mapeo...")
-        urls_in_sheet = worksheet.col_values(1)
-        logger.info(f"Se encontraron {len(urls_in_sheet)} filas existentes en el Sheet.")
 
-        # 6. Preparar actualizaciones
-        updates = []
-        logger.info(f"Paso 6: Procesando {len(result_list)} items del scraper...")
-        
-        for i, item in enumerate(result_list):
-            # Log de seguridad para el primer item
-            if i == 0:
-                logger.debug(f"Estructura del primer item: {item.keys() if isinstance(item, dict) else 'NO ES DICT'}")
+def normalize_legacy_rows(records: list, remaining_credits=None) -> list:
+    """
+    records: engine records (best attempt per URL).
+    Returns flat rows for the legacy table.
 
-            catalog_link = item.get('catalog_link')
-            if not catalog_link:
-                logger.debug(f"Item #{i} ignorado: no tiene 'catalog_link'.")
+    Fixed columns: catalog_link, price (INT), price_in_installments,
+    timestamp, status, api_cost_total, remaining_credits.
+    Every OTHER field in the record (config-driven, e.g. title, competitor,
+    image, subtitle, ...) is passed through with the same name, so adding a
+    field = adding a config row + a DB column. No code change.
+    """
+    def clean_price(value):
+        if value in (None, "", "n/a"):
+            return 0
+        digits = "".join(ch for ch in str(value) if ch.isdigit())
+        return int(digits) if digits else 0
+
+    def clean_installments(value):
+        if value in (None, "n/a"):
+            return ""
+        return str(value).strip()
+
+    rows = []
+    for record in records:
+        row = {
+            "catalog_link": record.get("_url"),
+            "price": clean_price(record.get("price")),
+            "price_in_installments": clean_installments(record.get("price_in_installments")),
+            "timestamp": record.get("_timestamp"),
+            "status": record.get("_status"),
+            "api_cost_total": int(record.get("_api_cost_total") or 0),
+            "remaining_credits": remaining_credits,
+        }
+        # pass through every other scraped field (skip engine metadata keys)
+        for key, value in record.items():
+            if key.startswith("_") or key in row:
                 continue
-            
-            # Formateo de fila
-            row_data = [
-                catalog_link,
-                item.get('title', ''),
-                item.get('price', 0),
-                item.get('competitor', ''),
-                item.get('price_in_installments', ''),
-                item.get('image', ''),
-                str(item.get('timestamp', '')),
-                item.get('status', ''),
-                item.get('api_cost_total', 0),
-                item.get('remaining_credits', 0)
-            ]
+            row[key] = value
+        rows.append(row)
+    return rows
 
-            if catalog_link in urls_in_sheet:
-                row_idx = urls_in_sheet.index(catalog_link) + 1
-                updates.append({
-                    'range': f"A{row_idx}:J{row_idx}",
-                    'values': [row_data]
-                })
-            else:
-                # Si quieres ver qué URLs faltan, descomenta la siguiente línea:
-                # logger.debug(f"URL no encontrada en Sheet: {catalog_link}")
-                pass
 
-        # 7. Ejecutar Batch Update
-        if updates:
-            logger.info(f"Paso 7: Enviando batch_update para {len(updates)} filas...")
-            worksheet.batch_update(updates)
-            logger.info("¡Éxito! Google Sheet actualizado correctamente.")
-        else:
-            logger.warning("No se generaron actualizaciones. ¿Coinciden las URLs del scraper con las del Sheet?")
+def _split_table(table: str):
+    """Split 'schema.table' into (schema, table); schema falls back to the
+    connected database name."""
+    parts = table.split(".")
+    if len(parts) == 2:
+        return parts[0], parts[1]
+    return (cfg.MYSQL_NAME or cfg.NAME_DB or ""), parts[-1]
 
-    except gspread.exceptions.APIError as e:
-        logger.error(f"Error de API de Google: {e.response.text}")
-    except Exception as e:
-        # Aquí capturamos TODO con lujo de detalle
-        logger.error("--- ERROR CRÍTICO EN GOOGLE SHEETS ---")
-        logger.error(f"Tipo de excepción: {type(e).__name__}")
-        logger.error(f"Mensaje de error: {str(e)}")
-        logger.error("Traceback completo:")
-        logger.error(traceback.format_exc())
-    finally:
-        logger.info("--- Fin del proceso de Sheets ---")
 
-def load_scrap_gsheet(result_list):
-    logger.info("Iniciando actualización en Google Sheets...")
-    update_sheets_catalogo(result_list)
+def update_legacy_rows(rows: list) -> int:
+    """
+    UPDATE the legacy table keyed by catalog_link.
+
+    The SET clause is built DYNAMICALLY from the columns that exist in the
+    table, so a new scraped field only needs its config row + DB column.
+    """
+    table = cfg.LEGACY_TABLE
+    if not rows:
+        logger.info("No legacy rows to update.")
+        return 0
+
+    schema, tbl = _split_table(table)
+    with get_engine().connect() as conn:
+        result = conn.execute(text(
+            "SELECT COLUMN_NAME AS col FROM information_schema.columns "
+            "WHERE table_schema = :schema AND table_name = :tbl"
+        ), {"schema": schema, "tbl": tbl})
+        table_columns = {row.col for row in result.mappings()}
+
+    # catalog_link is the WHERE key; everything else in the row that also
+    # exists as a table column gets SET.
+    set_cols = [c for c in rows[0].keys()
+                if c in table_columns and c != "catalog_link"]
+    skipped = [c for c in rows[0].keys() if c not in table_columns]
+    if skipped:
+        logger.info("Skipping fields without a DB column: %s", skipped)
+    if not set_cols:
+        logger.warning("No matching columns found in %s - nothing to update", table)
+        return 0
+
+    set_clause = ", ".join(f"`{c}` = :{c}" for c in set_cols)
+    statement = text(
+        f"UPDATE {_quoted(table)} SET {set_clause} WHERE catalog_link = :catalog_link"
+    )
+    payload = [{k: r[k] for k in [*set_cols, "catalog_link"] if k in r} for r in rows]
+    with get_engine().begin() as conn:
+        result = conn.execute(statement, payload)
+        logger.info("Updated %d row(s) in %s (legacy mode, %d column(s))",
+                    result.rowcount, table, len(set_cols))
+        return result.rowcount
+
+
+# ──────────────────────────────────────────────────────────────
+# RESULTS: one row per URL, full record in a JSON column
+# ──────────────────────────────────────────────────────────────
+def build_result_rows(records: list) -> list:
+    """
+    records: engine records (best attempt per URL).
+    Returns rows ready for the results table:
+        url, status, data_scrapped (JSON string)
+    """
+    rows = []
+    for record in records:
+        rows.append({
+            "url": record.get("_url"),
+            "status": record.get("_status"),
+            "data_scrapped": json.dumps(record, ensure_ascii=False),
+        })
+    return rows
+
+
+def upsert_results(records: list) -> int:
+    """
+    Insert/update the results table (UNIQUE KEY on url required).
+
+    data_scrapped stores the whole per-URL record as JSON:
+    extracted fields + _status/_attempts/_api_cost_total/... metadata.
+    """
+    table = _quoted(cfg.SCRAPE_RESULTS_TABLE)
+    rows = build_result_rows(records)
+    if not rows:
+        logger.info("No results to persist.")
+        return 0
+
+    statement = text(f"""
+        INSERT INTO {table} (url, status, data_scrapped, created_at, updated_at)
+        VALUES (:url, :status, :data_scrapped, NOW(), NOW())
+        ON DUPLICATE KEY UPDATE
+            status = VALUES(status),
+            data_scrapped = VALUES(data_scrapped),
+            updated_at = NOW()
+    """)
+    with get_engine().begin() as conn:
+        conn.execute(statement, rows)
+        logger.info("Persisted %d result row(s) to %s", len(rows), table)
+        return len(rows)
+
+
+# ──────────────────────────────────────────────────────────────
+# CONFIG: field-extraction rules
+# ──────────────────────────────────────────────────────────────
+def load_field_config() -> list:
+    """
+    Read the enabled extraction rules from the config table.
+
+    Returns a list of dicts (see app/services/rules.rows_to_rules for the
+    expected keys). Returns [] when the table does not exist yet.
+    """
+    table = _quoted(cfg.SCRAPE_FIELDS_TABLE)
+    try:
+        with get_engine().connect() as conn:
+            result = conn.execute(text(f"""
+                SELECT field_name, kind, selectors, pattern, is_regex,
+                       attribute, regex, regex_on_html,
+                       exclude_class_contains, exclude_ancestor_class,
+                       default_value, required, priority
+                FROM {table}
+                WHERE enabled = 1
+                ORDER BY priority, id
+            """))
+            rows = [dict(row) for row in result.mappings()]
+            logger.info("Loaded %d field-config row(s) from %s", len(rows), table)
+            return rows
+    except Exception as exc:
+        logger.warning("Field-config table %s not available yet (%s)", table, exc)
+        return []

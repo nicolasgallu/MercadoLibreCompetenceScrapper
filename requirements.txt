@@ -26,8 +26,6 @@ Jinja2==3.1.6
 loguru==0.7.3
 MarkupSafe==3.0.3
 multidict==6.7.1
-numpy==2.2.6
-pandas==2.3.3
 propcache==0.4.1
 pyasn1==0.6.2
 pyasn1_modules==0.4.2
@@ -48,5 +46,4 @@ urllib3==2.6.3
 Werkzeug==3.1.5
 yarl==1.22.0
 gunicorn==21.2.0
-gspread>=6.0.0
-google-auth>=2.0.0
+gspread==6.2.1
