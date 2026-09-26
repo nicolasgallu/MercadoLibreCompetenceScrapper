@@ -1,0 +1,14 @@
+.env
+.env.*
+service_account.json
+*.json
+.git
+.gitignore
+__pycache__
+*.pyc
+.pytest_cache
+tests
+venv
+venv-meli-competence-scrapper
+Dockerfile
+cloudbuild.yaml

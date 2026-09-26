@@ -55,9 +55,16 @@ def get_engine():
         elif cfg.INSTANCE_DB:
             if cfg.SERVICE_ACCOUNT_FILE:
                 import os as _os
-                _os.environ["GOOGLE_APPLICATION_CREDENTIALS"] = cfg.SERVICE_ACCOUNT_FILE
-                logger.info("Using service account file %s for Cloud SQL auth",
-                            cfg.SERVICE_ACCOUNT_FILE)
+                if _os.path.exists(cfg.SERVICE_ACCOUNT_FILE):
+                    _os.environ["GOOGLE_APPLICATION_CREDENTIALS"] = cfg.SERVICE_ACCOUNT_FILE
+                    logger.info("Using service account file %s for Cloud SQL auth",
+                                cfg.SERVICE_ACCOUNT_FILE)
+                else:
+                    # e.g. a stale path baked into the image: fall back to the
+                    # Cloud Run attached service account (ADC)
+                    logger.warning("SERVICE_ACCOUNT_FILE %s not found - "
+                                   "using the Cloud Run attached service account (ADC)",
+                                   cfg.SERVICE_ACCOUNT_FILE)
             from google.cloud.sql.connector import Connector
 
             connector = Connector()
