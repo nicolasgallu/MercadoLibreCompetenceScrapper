@@ -13,13 +13,9 @@ RUN ln -snf /usr/share/zoneinfo/$TZ /etc/localtime && echo $TZ > /etc/timezone
 # Copiar el contenido del proyecto al contenedor
 COPY . /app
 
-# Instalar dependencias (asumiendo que 'gunicorn' está en requirements.txt)
+# Instalar dependencias
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-# El watchdog no es necesario en producción, se omite.
-
-# Exponer el puerto (es solo informativo en Cloud Run, pero se mantiene)
-EXPOSE 8080
-
-CMD ["python", "-m", "gunicorn", "--bind", "0.0.0.0:8080", "--workers", "1", "--threads", "4", "--worker-class", "gthread", "--timeout", "300", "main:app"]
+# Cloud Run Job: run the pipeline once and exit
+CMD ["python", "main.py"]

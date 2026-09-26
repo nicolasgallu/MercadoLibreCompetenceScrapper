@@ -8,8 +8,8 @@ from app.utils.logger import logger
 scrapping_event = Blueprint("scrapping_init", __name__, url_prefix="/webhooks/start_scrapping")
 @scrapping_event.route("", methods=["POST"], strict_slashes=False)
 def main():
-    response = request.json
-    if SECRET_GUIAS != response['secret']:
+    response = request.get_json(silent=True) or {}
+    if SECRET_GUIAS is None or response.get("secret") != SECRET_GUIAS:
         return Response(status=401)
     logger.info("Receving notification from App Import - Dispatching thread")
 
