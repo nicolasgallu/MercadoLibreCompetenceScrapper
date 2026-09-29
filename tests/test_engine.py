@@ -67,6 +67,14 @@ def test_concurrency_respects_account_limit():
     assert engine.concurrency == 10  # account says 10, cap default is 30
 
 
+def test_executor_is_sized_to_concurrency():
+    """The worker pool must not depend on os.cpu_count() (Cloud Run 1-vCPU
+    would otherwise throttle concurrency to ~5 threads)."""
+    engine, client, _, _ = run_engine(["u1"], lambda cfg: FakeResponse(),
+                                      max_concurrency=20)
+    assert engine.executor._max_workers >= engine.concurrency
+
+
 def test_concurrency_respects_cap():
     engine, client, _, _ = run_engine(["u1", "u2"], lambda cfg: FakeResponse(),
                                       max_concurrency=5)

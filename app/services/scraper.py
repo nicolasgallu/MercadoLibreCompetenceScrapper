@@ -23,6 +23,7 @@ import asyncio
 import random
 import time
 import uuid
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
 
 from scrapfly import ScrapflyClient, ScrapeConfig, ScrapflyError
@@ -157,6 +158,14 @@ class ScrapeEngine:
             logger.info("Scrape concurrency: %d (account limit unknown)", self.concurrency)
 
         self.js_concurrency = max(1, min(self.concurrency, int(js_concurrency or cfg.JS_CONCURRENCY)))
+
+        # Dedicated worker pool for the blocking SDK calls. Python's default
+        # executor caps at min(32, cpu_count+4) threads, which on a 1-vCPU
+        # Cloud Run job would silently throttle us to ~5 concurrent scrapes.
+        self.executor = ThreadPoolExecutor(
+            max_workers=max(8, self.concurrency + 4),
+            thread_name_prefix="scrapfly",
+        )
 
     # ──────────────────────────────────────────────────────────
     # PUBLIC API
@@ -353,7 +362,9 @@ class ScrapeEngine:
     async def _do_scrape(self, cfg_obj):
         """Run one scrape in a worker thread; never raises."""
         try:
-            return await asyncio.to_thread(self.client.scrape, cfg_obj, True)
+            loop = asyncio.get_running_loop()
+            return await loop.run_in_executor(
+                self.executor, self.client.scrape, cfg_obj, True)
         except ScrapflyError as exc:
             # no_raise=True already returns the error envelope for API-level
             # errors; this catches SDK-side leftovers.
