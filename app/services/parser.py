@@ -61,6 +61,14 @@ DEFAULT_RULES = {
             "default_value": "n/a",
         },
         {
+            # new catalog layout: "#pricing_price_subtitle" with the money
+            # fragmented into spans -> regex reassembles it exactly
+            "field_name": "price_in_installments",
+            "selectors": ["#pricing_price_subtitle"],
+            "regex": r"(?is)^(.+?cuotas de )(\$?)\s*([\d.]+)\s*(,)\s*(\d+)\s*$",
+            "default_value": "n/a",
+        },
+        {
             "field_name": "price_in_installments",
             "selectors": [
                 "div.ui-pdp-price__subtitles",
@@ -151,13 +159,24 @@ def _selector_matches(el, rule):
 
 
 def _apply_regex(text, pattern):
-    """Apply an optional post-extraction regex; None means 'no match'."""
+    """
+    Apply an optional post-extraction regex; None means 'no match'.
+
+    - 0 groups -> whole match
+    - 1 group  -> that group
+    - N groups -> all groups joined with "" (lets rules reassemble a
+      clean value from fragmented markup, e.g. money spans)
+    """
     if not pattern:
         return text
     m = re.search(pattern, text)
     if not m:
         return None
-    return (m.group(1) if m.lastindex else m.group(0)).strip()
+    if not m.lastindex:
+        return m.group(0).strip()
+    if m.lastindex == 1:
+        return (m.group(1) or "").strip()
+    return "".join(g or "" for g in m.groups()).strip()
 
 
 def _extract_one(soup, html, rule) -> str:
@@ -198,7 +217,9 @@ def extract_fields(html: str, field_rules: list) -> dict:
     """
     Extract every configured field from the page.
 
-    Returns {field_name: value} for each rule in `field_rules`.
+    Returns {field_name: value}. Several rules may share a field_name
+    (fallback chain): the first rule that produces a non-default value
+    wins, so ordering by priority matters.
     """
     out = {}
     if not html:
@@ -207,7 +228,11 @@ def extract_fields(html: str, field_rules: list) -> dict:
         return out
     soup = BeautifulSoup(html, "html.parser")
     for rule in field_rules:
-        out[rule["field_name"]] = _extract_one(soup, html, rule)
+        name = rule["field_name"]
+        default = rule.get("default_value") or ""
+        if name in out and out[name] != default:
+            continue  # an earlier rule already extracted a real value
+        out[name] = _extract_one(soup, html, rule)
     return out
 
 

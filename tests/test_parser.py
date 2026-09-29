@@ -157,3 +157,40 @@ def test_real_wall_page():
     html = open(os.path.join(FIXTURES, "wall.html"),
                 encoding="utf-8", errors="ignore").read()
     assert classify_page(html, 200) == ("blocked", "shield_detected")
+
+
+# ── new pricing_price_subtitle element ───────────────────────
+PRICING_SUBTITLE_HTML = """
+<p class="ui-pdp-color--GREEN ui-pdp-size--XSMALL ui-pdp-family--REGULAR spacing-layout my-0" id="pricing_price_subtitle">
+  <span>Mismo precio en 9 cuotas de </span>
+  <span class="ui-pdp-price__part__container">
+    <span class="andes-money-amount ui-pdp-price__part andes-money-amount--cents-comma andes-money-amount--compact" aria-label="176273 pesos con 33 centavos">
+      <span class="andes-money-amount__currency-symbol">$</span>
+      <span class="andes-money-amount__fraction">176.273</span>,
+      <span class="andes-money-amount__cents">33</span>
+    </span>
+  </span>
+</p>
+"""
+
+
+def test_pricing_subtitle_reassembled_exactly():
+    fields = extract_fields(PRICING_SUBTITLE_HTML, DEFAULT_RULES["fields"])
+    assert fields["price_in_installments"] == "Mismo precio en 9 cuotas de $176.273,33"
+
+
+def test_pricing_subtitle_falls_back_to_classic_subtitles():
+    html = """
+    <html><body>
+    <div class="ui-pdp-price__subtitles">12x $49.999 sin interés</div>
+    </body></html>
+    """
+    fields = extract_fields(html, DEFAULT_RULES["fields"])
+    assert fields["price_in_installments"] == "12x $49.999 sin interés"
+
+
+def test_multi_group_regex_join():
+    from app.services.parser import _apply_regex
+    text = "Mismo precio en 9 cuotas de $ 176.273 , 33"
+    pattern = r"(?is)^(.+?cuotas de )(\$?)\s*([\d.]+)\s*(,)\s*(\d+)\s*$"
+    assert _apply_regex(text, pattern) == "Mismo precio en 9 cuotas de $176.273,33"

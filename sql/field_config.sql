@@ -50,6 +50,11 @@ VALUES
  NULL, NULL, 'n/a', 0, 30),
 
 ('price_in_installments', 'field',
+ '["#pricing_price_subtitle"]',
+ NULL, '(?is)^(.+?cuotas de )(\\$?)\\s*([\\d.]+)\\s*(,)\\s*(\\d+)\\s*$',
+ NULL, NULL, NULL, 'n/a', 0, 39),
+
+('price_in_installments', 'field',
  '["div.ui-pdp-price__subtitles",
    ".ui-pdp-products__list"]',
  NULL, '(?i)(?:cuota promocionada en|hasta)?\\s*(\\d+\\s*(?:x|cuotas)[^\\n|]{0,60})',

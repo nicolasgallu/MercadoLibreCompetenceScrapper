@@ -1,3 +1,5 @@
+import os
+
 """DB-layer tests: payload building, rule conversion, and a real MariaDB
 integration test (skipped when no server is reachable)."""
 import json
@@ -62,10 +64,12 @@ def test_rows_to_rules_full():
 
 
 # ── real MariaDB integration (skipped when unavailable) ───────
+TEST_MYSQL_PORT = int(os.environ.get("TEST_MYSQL_PORT", "3306"))
+
 def _db_is_reachable():
     import pymysql
     try:
-        conn = pymysql.connect(host="127.0.0.1", port=3306, user="scraper",
+        conn = pymysql.connect(host="127.0.0.1", port=TEST_MYSQL_PORT, user="scraper",
                                password="scraperpass", database="scrapfly_test",
                                connect_timeout=2)
         conn.close()
@@ -81,7 +85,7 @@ pytestmark = pytest.mark.skipif(
 @pytest.fixture()
 def db(monkeypatch):
     monkeypatch.setattr(cfg, "MYSQL_HOST", "127.0.0.1")
-    monkeypatch.setattr(cfg, "MYSQL_PORT", 3306)
+    monkeypatch.setattr(cfg, "MYSQL_PORT", TEST_MYSQL_PORT)
     monkeypatch.setattr(cfg, "MYSQL_USER", "scraper")
     monkeypatch.setattr(cfg, "MYSQL_PASSWORD", "scraperpass")
     monkeypatch.setattr(cfg, "MYSQL_NAME", "scrapfly_test")
@@ -212,7 +216,7 @@ def test_json_pipeline_end_to_end():
 
     monkeypatch = pytest.MonkeyPatch()
     monkeypatch.setattr(cfg, "MYSQL_HOST", "127.0.0.1")
-    monkeypatch.setattr(cfg, "MYSQL_PORT", 3306)
+    monkeypatch.setattr(cfg, "MYSQL_PORT", TEST_MYSQL_PORT)
     monkeypatch.setattr(cfg, "MYSQL_USER", "scraper")
     monkeypatch.setattr(cfg, "MYSQL_PASSWORD", "scraperpass")
     monkeypatch.setattr(cfg, "MYSQL_NAME", "scrapfly_test")
@@ -338,7 +342,7 @@ def test_legacy_roundtrip():
 
     monkeypatch = pytest.MonkeyPatch()
     monkeypatch.setattr(cfg, "MYSQL_HOST", "127.0.0.1")
-    monkeypatch.setattr(cfg, "MYSQL_PORT", 3306)
+    monkeypatch.setattr(cfg, "MYSQL_PORT", TEST_MYSQL_PORT)
     monkeypatch.setattr(cfg, "MYSQL_USER", "scraper")
     monkeypatch.setattr(cfg, "MYSQL_PASSWORD", "scraperpass")
     monkeypatch.setattr(cfg, "MYSQL_NAME", "scrapfly_test")
@@ -387,7 +391,7 @@ def test_legacy_pipeline_end_to_end():
 
     monkeypatch = pytest.MonkeyPatch()
     monkeypatch.setattr(cfg, "MYSQL_HOST", "127.0.0.1")
-    monkeypatch.setattr(cfg, "MYSQL_PORT", 3306)
+    monkeypatch.setattr(cfg, "MYSQL_PORT", TEST_MYSQL_PORT)
     monkeypatch.setattr(cfg, "MYSQL_USER", "scraper")
     monkeypatch.setattr(cfg, "MYSQL_PASSWORD", "scraperpass")
     monkeypatch.setattr(cfg, "MYSQL_NAME", "scrapfly_test")
@@ -459,7 +463,7 @@ def test_load_urls_raises_when_db_source_fails(monkeypatch):
     import app.settings.config as cfg
 
     monkeypatch.setattr(cfg, "MYSQL_HOST", "127.0.0.1")
-    monkeypatch.setattr(cfg, "MYSQL_PORT", 3306)
+    monkeypatch.setattr(cfg, "MYSQL_PORT", TEST_MYSQL_PORT)
     monkeypatch.setattr(cfg, "MYSQL_USER", "scraper")
     monkeypatch.setattr(cfg, "MYSQL_PASSWORD", "scraperpass")
     monkeypatch.setattr(cfg, "MYSQL_NAME", "scrapfly_test")
@@ -477,7 +481,7 @@ def test_load_urls_raises_when_db_has_no_urls(monkeypatch):
     import app.settings.config as cfg
 
     monkeypatch.setattr(cfg, "MYSQL_HOST", "127.0.0.1")
-    monkeypatch.setattr(cfg, "MYSQL_PORT", 3306)
+    monkeypatch.setattr(cfg, "MYSQL_PORT", TEST_MYSQL_PORT)
     monkeypatch.setattr(cfg, "MYSQL_USER", "scraper")
     monkeypatch.setattr(cfg, "MYSQL_PASSWORD", "scraperpass")
     monkeypatch.setattr(cfg, "MYSQL_NAME", "scrapfly_test")
