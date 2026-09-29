@@ -259,3 +259,23 @@ def test_429_gives_up_after_max_waits():
     assert record["_error"] == "api_throttled"
     # 1 initial + 5 throttle waits = 6 calls, then gives up
     assert len(client.calls) == 6
+
+
+def test_run_with_tiers_override_runs_only_those_tiers():
+    """The slow rescue pass: only the given tiers run, no wave B."""
+    from app.settings import config as cfg
+
+    waits = []
+
+    def handler(cfg_obj):
+        waits.append(cfg_obj.rendering_wait)
+        return FakeResponse(html=WALL_HTML, cost=30)
+
+    client = FakeClient(handler)
+    engine = ScrapeEngine(client=client, max_concurrency=5)
+    records, stats = asyncio.run(
+        engine.run(["https://x.test/u1"], tiers=[cfg.TIER_2_JS]))
+
+    assert len(client.calls) == 1                       # exactly one attempt
+    assert client.calls[0].rendering_wait == 10_000     # the deep tier only
+    assert records[0]["_status"] == FAILED              # no wave B, no tier0/1

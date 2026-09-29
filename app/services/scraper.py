@@ -161,12 +161,15 @@ class ScrapeEngine:
     # ──────────────────────────────────────────────────────────
     # PUBLIC API
     # ──────────────────────────────────────────────────────────
-    async def run(self, urls: list, skip_js_rescue: bool = False):
+    async def run(self, urls: list, skip_js_rescue: bool = False, tiers: list = None):
         """
         Scrape all URLs and return (records, stats).
 
         records: list of final per-URL records in the SAME ORDER as urls.
         stats:   dict with status counts, per-stage counts, total credits, timing.
+
+        `tiers` overrides the tier ladder (used for the separate slow
+        rescue pass on previously failed URLs); when set, no wave B runs.
         """
         urls = list(urls)
         if not urls:
@@ -177,13 +180,13 @@ class ScrapeEngine:
         # ── Wave A: cheap tiers, high concurrency ──
         wave_a, failed_idx = await self._wave(
             urls,
-            tiers=[cfg.TIER_0_JS, cfg.TIER_1_JS],
+            tiers=list(tiers) if tiers is not None else [cfg.TIER_0_JS, cfg.TIER_1_JS],
             concurrency=self.concurrency,
             label="A",
         )
 
         # ── Wave B: JS rescue for the stubborn leftovers ──
-        if failed_idx and not skip_js_rescue:
+        if tiers is None and failed_idx and not skip_js_rescue:
             logger.info("Rescue wave: %d URL(s) still failing -> tier2 deep JS retry",
                         len(failed_idx))
             carry = {
@@ -474,7 +477,8 @@ class ScrapeEngine:
         stats["per_second"] = round(stats["total"] / elapsed, 2) if elapsed > 0 else 0
         return stats
 
-    def _log_stats(self, stats):
+    @staticmethod
+    def _log_stats(stats):
         status = stats["status"]
         logger.info(
             "DONE: %d URLs | successed=%d discarded=%d failed=%d | "

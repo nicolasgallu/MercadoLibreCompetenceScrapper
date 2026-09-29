@@ -133,3 +133,7 @@ TIER_2_JS = {
     "timeout": 90_000,
     "cost_budget": 50,
 }
+
+# Slow rescue pass for URLs that failed the first pass: two deep attempts
+# with fresh sessions each time.
+RESCUE_TIERS = [dict(TIER_2_JS), dict(TIER_2_JS)]

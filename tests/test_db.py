@@ -501,3 +501,85 @@ def test_load_urls_clear_error_when_no_db_and_no_file(monkeypatch):
 
     with pytest.raises(RuntimeError, match="No database configured"):
         us.load_urls()
+
+
+def test_json_pipeline_two_stage_with_rescue():
+    """Stage 1 persists everything immediately (incl. failures);
+    stage 2 retries the failed URLs with the slow rescue tiers."""
+    import app.services.pipeline_scrapping as pipeline
+    import app.settings.config as cfg
+
+    monkeypatch = pytest.MonkeyPatch()
+    monkeypatch.setattr(cfg, "MYSQL_HOST", "127.0.0.1")
+    monkeypatch.setattr(cfg, "MYSQL_PORT", TEST_MYSQL_PORT)
+    monkeypatch.setattr(cfg, "MYSQL_USER", "scraper")
+    monkeypatch.setattr(cfg, "MYSQL_PASSWORD", "scraperpass")
+    monkeypatch.setattr(cfg, "MYSQL_NAME", "scrapfly_test")
+    monkeypatch.setattr(cfg, "SCRAPE_RESULTS_MODE", "json")
+    dm._engine = None
+    engine = dm.get_engine()
+    _create_tables(engine)
+    try:
+        from sqlalchemy import text
+        with engine.begin() as conn:
+            conn.execute(text("""
+                INSERT INTO scraping_field_config
+                  (field_name, kind, selectors, default_value, required, enabled)
+                VALUES ('title', 'field', :sels, 'n/a', 1, 1)"""),
+                {"sels": json.dumps(["h1.ui-pdp-title"])})
+
+        def rec(url, status, title):
+            return {"title": title, "price": "10", "competitor": "c",
+                    "price_in_installments": "n/a", "image": "i", "subtitle": "s",
+                    "_url": url, "_timestamp": "2026-09-29T00:00:00",
+                    "_status": status, "_attempts": [], "_api_cost_total": 30}
+
+        class StubEngine:
+            def __init__(self, rules=None, max_concurrency=None, js_concurrency=None):
+                self.calls = []
+
+            async def run(self, urls, skip_js_rescue=False, tiers=None):
+                self.calls.append((list(urls), tiers))
+                if tiers is None:
+                    return ([rec("u1", "successed", "ok1"),
+                             rec("u2", "failed", "n/a")],
+                            {"total": 2, "status": {"successed": 1, "discarded": 0,
+                                                    "failed": 1}})
+                return ([rec("u2", "successed", "rescued")],
+                        {"total": 1, "status": {"successed": 1, "discarded": 0,
+                                                "failed": 0}})
+
+        stub = StubEngine()
+        upsert_calls = []
+        sheets_calls = []
+        monkeypatch.setattr(pipeline, "ScrapeEngine", lambda **kw: stub)
+        monkeypatch.setattr(pipeline, "remain_budget", lambda: ("msg", 777))
+        monkeypatch.setattr(pipeline.db_manager, "upsert_results",
+                            lambda recs: upsert_calls.append(
+                                [(r["_url"], r["_status"], r.get("title")) for r in recs]
+                            ) or len(recs))
+        monkeypatch.setattr(pipeline.sheets, "update_catalogo",
+                            lambda rows: sheets_calls.append(
+                                [(r["catalog_link"], r["status"]) for r in rows]
+                            ) or len(rows))
+
+        records, stats = pipeline.run_pipeline()
+
+        # stage 1 + rescue stage
+        assert len(stub.calls) == 2
+        assert stub.calls[0][1] is None                      # first pass tiers
+        assert stub.calls[1][1] == cfg.RESCUE_TIERS           # slow rescue tiers
+
+        # persisted twice: first pass (incl. the failed row), then the rescue
+        assert len(upsert_calls) == 2
+        assert upsert_calls[0] == [("u1", "successed", "ok1"), ("u2", "failed", "n/a")]
+        assert upsert_calls[1] == [("u2", "successed", "rescued")]
+        assert len(sheets_calls) == 2
+
+        # final merged stats/records
+        assert stats["status"]["successed"] == 2
+        assert records[1]["title"] == "rescued"
+    finally:
+        engine.dispose()
+        dm._engine = None
+        monkeypatch.undo()

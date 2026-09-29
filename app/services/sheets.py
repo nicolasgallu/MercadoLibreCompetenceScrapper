@@ -45,6 +45,26 @@ def _credentials_file():
     return os.environ.get("GOOGLE_APPLICATION_CREDENTIALS")
 
 
+def _client():
+    """
+    Build a gspread client from, in order:
+      1) a service-account JSON file (local runs)
+      2) Application Default Credentials (Cloud Run's attached SA)
+    """
+    import gspread
+
+    creds_file = _credentials_file()
+    if creds_file:
+        return gspread.service_account(filename=creds_file)
+
+    import google.auth
+
+    credentials, _project = google.auth.default(
+        scopes=["https://www.googleapis.com/auth/spreadsheets"]
+    )
+    return gspread.authorize(credentials)
+
+
 def update_catalogo(rows: list) -> int:
     """
     Update the Catalogo tab with the given flat rows. Never raises:
@@ -52,15 +72,8 @@ def update_catalogo(rows: list) -> int:
     """
     if not rows:
         return 0
-    creds = _credentials_file()
-    if not creds:
-        logger.warning("Google Sheets skipped - no SERVICE_ACCOUNT_FILE / "
-                       "GOOGLE_APPLICATION_CREDENTIALS configured")
-        return 0
     try:
-        import gspread
-
-        client = gspread.service_account(filename=creds)
+        client = _client()
         sheet = client.open_by_url(cfg.GOOGLE_SHEET_URL).worksheet(cfg.GOOGLE_SHEET_TAB)
 
         # url -> row number (column A), matched raw OR canonicalized
